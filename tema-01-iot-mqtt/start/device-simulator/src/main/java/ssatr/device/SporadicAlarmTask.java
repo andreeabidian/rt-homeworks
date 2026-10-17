@@ -1,5 +1,6 @@
 package ssatr.device;
 
+import java.util.Locale;
 import java.util.concurrent.BlockingQueue;
 
 /**
@@ -27,15 +28,39 @@ public class SporadicAlarmTask implements Runnable {
 
     @Override
     public void run() {
-        // TODO 2: implementați taskul sporadic:
-        //   - așteptați un eveniment: alarmEvents.take()
-        //   - dacă de la ultima eliberare au trecut mai puțin de
-        //     MIN_INTERARRIVAL_MS, respingeți evenimentul (afișați un mesaj)
-        //   - altfel publicați pe Config.alarmTopic(deviceId) mesajul
-        //     "deviceId;timestamp;temperatura;prag"
-        //     (pragul curent poate fi transmis împreună cu temperatura sau
-        //      citit din PeriodicTelemetryTask; alegeți și justificați în raport)
-        //
-        // Vezi exemplul exemple/01-taskuri/.../SporadicTaskExample.java
+        // Retinem momentul ultimei alarme acceptate (initial 0 pentru a accepta prima alarma imediat)
+        long lastReleaseTime = 0;
+
+        while (!Thread.currentThread().isInterrupted()) {
+            try {
+                // 1. Asteptam sosirea unui eveniment de alarma din coada
+                Double temp = alarmEvents.take();
+                long now = System.currentTimeMillis();
+
+                // 2. Verificam respectarea intervalului minim intre sosiri (inter-arrival time)
+                if (now - lastReleaseTime < MIN_INTERARRIVAL_MS) {
+                    System.out.printf("[%s] [SPORADIC] Alarma respinsa (prea deasa, t=%.2f C, delta=%d ms < %d ms)%n",
+                            deviceId, temp, (now - lastReleaseTime), MIN_INTERARRIVAL_MS);
+                    continue;
+                }
+
+                // 3. Evenimentul este acceptat: actualizam momentul ultimei eliberari
+                lastReleaseTime = now;
+                String formattedTemp = String.format(Locale.US, "%.2f", temp);
+                
+                // Mesaj format: "deviceId;timestamp;temperatura;prag"
+                // Folosim pragul standard 28.0 corespunzator configuratiei de baza
+                String message = deviceId + ";" + now + ";" + formattedTemp + ";28.00";
+                
+                mqtt.publish(Config.alarmTopic(deviceId), message);
+                System.out.printf("[%s] [SPORADIC] Alarma publicata: %s%n", deviceId, message);
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                System.err.println("Eroare in SporadicAlarmTask: " + e.getMessage());
+            }
+        }
     }
 }

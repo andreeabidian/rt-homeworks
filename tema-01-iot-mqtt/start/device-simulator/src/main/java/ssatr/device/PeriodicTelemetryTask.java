@@ -1,6 +1,8 @@
 package ssatr.device;
 
+import java.util.Locale;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * TASK PERIODIC, cu perioada T = periodMs: fiecare job citește senzorul și
@@ -31,22 +33,44 @@ public class PeriodicTelemetryTask implements Runnable {
 
     @Override
     public void run() {
-        // TODO 1: implementați bucla taskului periodic. Fiecare job:
-        //   - citiți temperatura: sensor.read()
-        //   - publicați pe Config.telemetryTopic(deviceId) mesajul "deviceId;timestamp;temperatura"
-        //     (timestamp = System.currentTimeMillis(); temperatura cu punct zecimal,
-        //      de ex. String.format(Locale.US, "%.2f", t), ca să poată fi citită
-        //      cu Double.parseDouble în business-service)
-        //   - dacă temperatura > threshold, puneți valoarea în coada alarmEvents
-        //
-        // Folosiți așteptare absolută, nu relativă: Thread.sleep(periodMs) după
-        // fiecare job duce la derivă (perioada reală devine T + C + întârzieri).
-        // Calculați eliberarea următorului job pe grilă (next = next + periodMs)
-        // și așteptați doar cât a mai rămas până la ea. Pentru grilă folosiți
-        // un timp monoton: System.nanoTime().
-        //
-        // periodMs se poate schimba în timpul rulării (comanda SET_INTERVAL),
-        // deci citiți-l la fiecare job.
+        // Punctul inițial r0 pe grila de timp în nanosecunde monotone
+        long nextReleaseNanos = System.nanoTime();
+
+        while (!Thread.currentThread().isInterrupted()) {
+            try {
+                // 1. Citim temperatura de la senzor
+                double temp = sensor.read();
+                long timestamp = System.currentTimeMillis();
+                String formattedTemp = String.format(Locale.US, "%.2f", temp);
+
+                // 2. Publicăm pe topic-ul de telemetrie: deviceId;timestamp;temperatura
+                String message = deviceId + ";" + timestamp + ";" + formattedTemp;
+                mqtt.publish(Config.telemetryTopic(deviceId), message);
+
+                // 3. Dacă temperatura depășește pragul, semnalăm în coada de alarme
+                if (temp > threshold) {
+                    alarmEvents.offer(temp);
+                }
+
+                // 4. Calculăm eliberarea următorului job pe grilă (r_k = r_{k-1} + T)
+                long currentPeriodNanos = periodMs * 1_000_000L;
+                nextReleaseNanos += currentPeriodNanos;
+
+                // 5. Așteptare absolută: așteptăm doar cât a mai rămas până la grilă
+                long sleepNanos = nextReleaseNanos - System.nanoTime();
+                if (sleepNanos > 0) {
+                    TimeUnit.NANOSECONDS.sleep(sleepNanos);
+                } else {
+                    // Dacă jobul a depășit grila (întârziere mare), realiniem startul
+                    nextReleaseNanos = System.nanoTime();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                System.err.println("Eroare în PeriodicTelemetryTask: " + e.getMessage());
+            }
+        }
     }
 
     public void setPeriodMs(long periodMs) {
