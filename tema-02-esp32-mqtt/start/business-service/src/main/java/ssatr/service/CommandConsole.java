@@ -3,13 +3,13 @@ package ssatr.service;
 import java.util.Scanner;
 
 /**
- * Consola operatorului: citește comenzi de la tastatură.
+ * Consola interactivă pentru operator.
  *
- *   show                               afișează dashboard-ul
- *   <deviceId> <COMANDA> [parametru]   trimite o comandă unui device, de exemplu
- *                                      device-1 SET_INTERVAL 1000
- *   help                               afișează comenzile
- *   exit                               oprește serviciul
+ * Comenzi acceptate:
+ *   show                   - afișează starea tuturor dispozitivelor
+ *   <deviceId> <comandă>   - trimite comanda către device-ul specificat
+ *                            (de ex: device-1 SET_INTERVAL 1000)
+ *   exit                   - oprește consola / aplicația
  */
 public class CommandConsole implements Runnable {
 
@@ -24,35 +24,50 @@ public class CommandConsole implements Runnable {
     @Override
     public void run() {
         Scanner scanner = new Scanner(System.in);
-        printHelp();
+        System.out.println("CommandConsole pornita. Tastati 'show' sau '<deviceId> <comanda>'. 'exit' pentru iesire.");
 
-        while (scanner.hasNextLine()) {
+        while (!Thread.currentThread().isInterrupted()) {
+            System.out.print("> ");
+            if (!scanner.hasNextLine()) {
+                break;
+            }
+
             String line = scanner.nextLine().trim();
-
             if (line.isEmpty()) {
                 continue;
-            } else if (line.equals("exit")) {
+            }
+
+            if ("exit".equalsIgnoreCase(line)) {
+                System.out.println("Oprire consola...");
+                System.exit(0);
                 break;
-            } else if (line.equals("help")) {
-                printHelp();
-            } else if (line.equals("show")) {
+            }
+
+            if ("show".equalsIgnoreCase(line)) {
+                // Afișează tabelul cu datele tuturor device-urilor
                 dashboard.print();
-            } else {
-                sendCommand(line);
+                continue;
+            }
+
+            // Comandă adresată unui device specific: <deviceId> <comanda>
+            // Exemplu: device-1 SET_INTERVAL 1000
+            String[] parts = line.split("\\s+", 2);
+            if (parts.length < 2) {
+                System.out.println("Format comanda invalid. Utilizare: show SAU <deviceId> <comanda> (ex: device-1 STATUS)");
+                continue;
+            }
+
+            String targetDevice = parts[0];
+            String commandPayload = parts[1];
+
+            // Publicare comandă pe topic-ul de comenzi al device-ului
+            String commandTopic = Config.commandTopic(targetDevice);
+            try {
+                mqtt.publish(commandTopic, commandPayload);
+                System.out.printf("[COMMAND SENT] Catre '%s': %s%n", targetDevice, commandPayload);
+            } catch (Exception e) {
+                System.err.println("Eroare la trimiterea comenzii pe MQTT: " + e.getMessage());
             }
         }
-    }
-
-    private void sendCommand(String line) {
-        // TODO 6: separați deviceId de restul liniei
-        //   ("device-1 SET_INTERVAL 1000" -> "device-1" și "SET_INTERVAL 1000")
-        //   și publicați comanda pe Config.commandTopic(deviceId).
-        //   Afișați un mesaj de eroare dacă linia nu are formatul corect.
-        System.out.println("(trimiterea comenzilor neimplementată): " + line);
-    }
-
-    private void printHelp() {
-        System.out.println("Comenzi: show | <deviceId> SET_INTERVAL <ms> | <deviceId> SET_THRESHOLD <valoare>");
-        System.out.println("         <deviceId> RESET | <deviceId> STATUS | help | exit");
     }
 }
